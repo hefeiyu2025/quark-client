@@ -160,7 +160,7 @@ func (c *QuarkClient) UploadFile(req OneStepUploadFileReq) error {
 	if req.RemoteTransfer != nil {
 		remoteName, remotePath = req.RemoteTransfer(remoteName, remotePath)
 	}
-	dirId, err := c.FileId(remotePath, true)
+	dirId, err := c.FileId(remotePath, true, true)
 	if err != nil {
 		return err
 	}
@@ -318,36 +318,61 @@ func (c *QuarkClient) DownloadFile(object File, localPath string, downloadCallba
 	if err != nil {
 		return err
 	}
+	totalSize := int64(object.Size)
+	downloaded := int64(0)
 
 	startTime := time.Now()
 	callback := func(info req.DownloadInfo) {
 		if info.Response.Response != nil {
-			totalSize := info.Response.ContentLength
-			downloaded := info.DownloadedSize
+
+			thisDownload := info.DownloadedSize
+			calDownloaded := thisDownload + downloaded
 			elapsed := time.Since(startTime).Seconds()
 			var speed float64
 			if elapsed == 0 {
-				speed = float64(downloaded) / 1024
+				speed = float64(calDownloaded) / 1024
 			} else {
-				speed = float64(downloaded) / 1024 / elapsed // KB/s
+				speed = float64(calDownloaded) / 1024 / elapsed // KB/s
 			}
 
 			// 计算进度百分比
-			percent := float64(downloaded) / float64(totalSize) * 100
-			fmt.Printf("\rdownloaded: %.2f%% (%d/%d bytes, %.2f KB/s)", percent, downloaded, totalSize, speed)
+			percent := float64(calDownloaded) / float64(totalSize) * 100
+			fmt.Printf("\rdownloaded: %.2f%% (%d/%d bytes, %.2f KB/s)", percent, calDownloaded, totalSize, speed)
+			if thisDownload == info.Response.ContentLength {
+				downloaded += thisDownload
+			}
 			// 相等即已经处理完毕
 			if downloaded == totalSize {
 				fmt.Println()
 			}
 		}
 	}
+	tempDir := "./tempDir/" + object.Fid
+	err = os.MkdirAll(tempDir, os.ModePerm)
+	if err != nil {
+		return err
+	}
+	segmentSize := int64(250 * 1024 * 1024)
+	start := int64(0)
+	tempFiles := make([]string, 0)
+	for i := 0; ; i++ {
+		end := start + (segmentSize - 1)
+		if end > (totalSize - 1) {
+			end = totalSize - 1
+		}
+		tempFileName, err := handleTask(c.sessionClient, start, end, downloadUrl, tempDir, callback)
+		if err != nil {
+			return err
+		}
+		tempFiles = append(tempFiles, tempFileName)
+		if end < (totalSize - 1) {
+			start = end + 1
+			continue
+		}
+		break
+	}
 
-	//TODO 改成分片下载就能把带宽拉满
-	_, err = c.downloadClient.R().
-		//SetHeader("Range", fmt.Sprintf("bytes=%d-%d", 250*1024*1024, 500*1024*1024-1)).
-		SetOutputFile(outputFile).
-		SetDownloadCallback(callback).
-		Get(downloadUrl)
+	err = mergeFile(outputFile, tempFiles)
 	if err != nil {
 		return err
 	}
@@ -370,7 +395,7 @@ func (c *QuarkClient) ShareFile(req ShareReq) (*RespData[SharePasswordData], err
 }
 
 // FileId 此方法会判断目录是否存在，不存在会直接创建
-func (c *QuarkClient) FileId(path string, usingCache bool) (string, error) {
+func (c *QuarkClient) FileId(path string, usingCache, autoCreate bool) (string, error) {
 	truePath := strings.Trim(path, "/")
 	paths := strings.Split(truePath, "/")
 
@@ -412,7 +437,7 @@ func (c *QuarkClient) FileId(path string, usingCache bool) (string, error) {
 			}
 		}
 		if !exist {
-			if filepath.Ext(pathStr) == "" {
+			if filepath.Ext(pathStr) == "" && autoCreate {
 				dir, err := c.MakeDir(pathStr, lastParentId)
 				if err != nil {
 					return "", err
@@ -428,4 +453,51 @@ func (c *QuarkClient) FileId(path string, usingCache bool) (string, error) {
 		}
 	}
 	return fileId, nil
+}
+
+func handleTask(client *req.Client, rangeStart, rangeEnd int64, url, tempDir string, downloadCallback req.DownloadCallback) (string, error) {
+	tempFilename := getRangeTempFile(rangeStart, rangeEnd, tempDir)
+
+	file, err := os.Create(tempFilename)
+	if err != nil {
+		return "", err
+	}
+
+	_, err = client.R().
+		SetHeader("Range", fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEnd)).
+		SetOutput(file).
+		SetDownloadCallback(downloadCallback).Get(url)
+
+	if err != nil {
+		return "", err
+	}
+	return tempFilename, nil
+}
+
+func getRangeTempFile(rangeStart, rangeEnd int64, workerDir string) string {
+	return filepath.Join(workerDir, fmt.Sprintf("temp-%d-%d", rangeStart, rangeEnd))
+}
+
+func mergeFile(filename string, tempFiles []string) error {
+	outputFile, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer outputFile.Close()
+	for _, temp := range tempFiles {
+		tempFile, err := os.Open(temp)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(outputFile, tempFile)
+		tempFile.Close()
+		if err != nil {
+			return err
+		}
+	}
+	// 两次循环是避免第一次循环出现错误
+	for _, temp := range tempFiles {
+		_ = os.Remove(temp)
+	}
+	return nil
 }

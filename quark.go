@@ -11,22 +11,20 @@ var defaultUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (K
 type SessionRefresh func(session string)
 
 type QuarkClient struct {
-	pus            string
-	puus           string
-	sessionClient  *req.Client
-	downloadClient *req.Client
-	defaultClient  *req.Client
-	pusRefresh     SessionRefresh
-	puusRefresh    SessionRefresh
+	pus           string
+	puus          string
+	sessionClient *req.Client
+	defaultClient *req.Client
+	pusRefresh    SessionRefresh
+	puusRefresh   SessionRefresh
 }
 
 func NewClient(pus, puus string) *QuarkClient {
 	client := &QuarkClient{
-		pus:            pus,
-		puus:           puus,
-		sessionClient:  initSessionClient(pus, puus),
-		downloadClient: initDownloadClient(pus, puus),
-		defaultClient:  initDefaultClient(),
+		pus:           pus,
+		puus:          puus,
+		sessionClient: initSessionClient(pus, puus),
+		defaultClient: initDefaultClient(),
 	}
 	return client
 }
@@ -58,18 +56,6 @@ func initSessionClient(pus, puus string) *req.Client {
 		SetCommonQueryParam("fr", "pc").
 		SetCommonCookies(&http.Cookie{Name: "__pus", Value: pus}, &http.Cookie{Name: "__puus", Value: puus}).
 		SetTimeout(30 * time.Minute).SetBaseURL("https://drive.quark.cn/1/clouddrive")
-	return sessionClient
-}
-
-func initDownloadClient(pus, puus string) *req.Client {
-	sessionClient := req.C().
-		SetCommonHeaders(map[string]string{
-			"User-Agent": defaultUa,
-			"Accept":     "application/json, text/plain, */*",
-			"Referer":    "https://pan.quark.cn",
-		}).
-		SetCommonCookies(&http.Cookie{Name: "__pus", Value: pus}, &http.Cookie{Name: "__puus", Value: puus}).
-		SetTimeout(30 * time.Minute)
 	return sessionClient
 }
 

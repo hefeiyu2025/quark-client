@@ -46,14 +46,14 @@ func TestDir(t *testing.T) {
 
 func TestDownloadFile(t *testing.T) {
 	client := beforeClient()
-	files, err := client.FileSort("0")
+	files, err := client.FileSort("d6d5e2be0d4e4beea02a99a8cbb3f527")
 	if err != nil {
 		fmt.Println(err)
 		panic(err)
 	}
 	for _, file := range files {
-		if file.File {
-			err = client.DownloadFile(file, "./", nil)
+		if file.File && file.FileName == "01.4k.mp4" {
+			err = client.DownloadFile(file, "./target", nil)
 			if err != nil {
 				fmt.Println(err)
 				panic(err)
@@ -124,7 +124,7 @@ func TestShareDelete(t *testing.T) {
 
 func TestDirId(t *testing.T) {
 	client := beforeClient()
-	dirId, err := client.FileId("/", false)
+	dirId, err := client.FileId("/", false, false)
 	if err != nil {
 		fmt.Println(err)
 		panic(err)
